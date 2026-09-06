@@ -312,7 +312,9 @@
       }
       msg("");
       var r = (res.results && res.results[0]) || {};
-      var bad = /該当なし|多い/.test(r.judge || "");
+      // 赤くするのは「うちに登録されていない品番」だけ。
+      // 読んだ数がそのまま納品数なので、枚数での警告は出さない。
+      var bad = /該当なし/.test(r.judge || "");
       if (bad) { beep(false); holdScreen("r", r.judge || "確認", code + "　" + (r.oya || ""), "!"); }
       $("last").innerHTML = '<div class="code ' + (bad ? "ng" : "ok") + '">' + esc(code) + '　' + esc(r.judge||"") + '</div>'
                           + '<div class="name">' + esc(r.oya||"") + '　' + esc(r.name||"") + '</div>';
