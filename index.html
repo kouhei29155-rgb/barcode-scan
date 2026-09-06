@@ -158,6 +158,10 @@
     cfg.box = saved.box || ""; cfg.wait = saved.wait || 1500;
   } catch(e){}
   try { queue = JSON.parse(localStorage.getItem(LS+".q") || "[]"); } catch(e){ queue = []; }
+  // 旧形式（文字列だけ）が残っていたら新形式に直す
+  queue = queue.map(function(x){
+    return (typeof x === "string") ? { code: x, id: "old" + x + Math.random().toString(36).slice(2,8) } : x;
+  });
   $("who").value = cfg.who; $("token").value = cfg.token;
   $("box").value = cfg.box; $("wait").value = String(cfg.wait);
 
@@ -165,8 +169,13 @@
   function saveQueue(){
     try { localStorage.setItem(LS+".q", JSON.stringify(queue)); } catch(e){}
     var q = $("queue");
-    if (queue.length) { q.textContent = "未送信 " + queue.length + " 件（電波が戻ると自動で送ります）"; q.classList.remove("hide"); }
-    else q.classList.add("hide");
+    if (queue.length) {
+      q.textContent = "⏳ 未送信 " + queue.length + " 件 — このまま開いておけば自動で送ります（15秒ごとに再試行）";
+      q.classList.remove("hide");
+    } else {
+      q.textContent = "";
+      q.classList.add("hide");
+    }
   }
 
   function msg(text, kind){
@@ -234,11 +243,21 @@
   }
 
   // ── 送信 ────────────────────────
-  function send(codes){
+  // 1回の読み取りごとに固有のidを振る。
+  // 「書けたのに返事が届かなかった」場合に再送しても、同じidは2回書かれない。
+  function newId(){
+    return Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  }
+
+  function send(items){
     return fetch(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ t: cfg.token, who: cfg.who, box: cfg.box, codes: codes })
+      body: JSON.stringify({
+        t: cfg.token, who: cfg.who, box: cfg.box,
+        codes: items.map(function(x){ return x.code; }),
+        ids:   items.map(function(x){ return x.id; })
+      })
     }).then(function(r){ return r.json(); });
   }
 
@@ -282,7 +301,8 @@
     $("last").innerHTML = '<div class="code">' + esc(code) + '</div>'
                         + '<div class="name">送信中…</div>';
 
-    send([code]).then(function(res){
+    var item = { code: code, id: newId() };
+    send([item]).then(function(res){
       if (!res || !res.ok) {
         var e = res && res.error;
         if (e === "bad_token") { msg("合言葉が違います。設定に戻って入れ直してください。", "err"); return; }
@@ -299,8 +319,10 @@
       addLog(code, r, bad ? "ng" : "ok");
       flushQueue();
     }).catch(function(){
-      queue.push(code); saveQueue();
-      msg("送信できませんでした。端末に貯めて、あとで自動送信します。", "err");
+      queue.push(item); saveQueue();
+      msg("電波が届かず送れませんでした。この端末に保存したので、電波が戻れば自動で送ります。", "err");
+      $("last").innerHTML = '<div class="code warn">' + esc(code) + '</div>'
+                          + '<div class="name">未送信（端末に保存しました）</div>';
       addLog(code, {judge:"⏳ 未送信"}, "warn");
     });
   }
@@ -380,6 +402,8 @@
 
   window.addEventListener("online", flushQueue);
   document.addEventListener("visibilitychange", function(){ if (!document.hidden) flushQueue(); });
+  // 未送信が残っていたら15秒ごとに自動で送り直す
+  setInterval(function(){ if (queue.length) flushQueue(); }, 15000);
 
   saveQueue();
 })();
