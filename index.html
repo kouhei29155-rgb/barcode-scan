@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<title>VenyVelm バーコード読取</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>📦</text></svg>">
+<style>
+  :root{
+    --bg:#111827; --panel:#1f2937; --line:#374151; --fg:#f9fafb; --muted:#9ca3af;
+    --ok:#34d399; --warn:#fbbf24; --ng:#f87171; --accent:#8ac349;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+    -webkit-text-size-adjust:100%}
+  body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  .wrap{max-width:560px;margin:0 auto;padding:12px}
+  h1{font-size:17px;margin:4px 0 12px;font-weight:700}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;padding:13px;font-size:17px;border-radius:9px;border:1px solid var(--line);
+    background:#0b1220;color:var(--fg)}
+  button{width:100%;padding:15px;font-size:17px;font-weight:700;border:0;border-radius:11px;
+    background:var(--accent);color:#0b1220;margin-top:12px}
+  button.sub{background:#374151;color:var(--fg)}
+  button:disabled{opacity:.45}
+  .row{display:flex;gap:8px}
+  .row>button{margin-top:0}
+  #reader{width:100%;border-radius:12px;overflow:hidden;background:#000;min-height:220px}
+  #reader video{width:100%!important;height:auto!important;display:block}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:10px 6px;text-align:center}
+  .stat b{display:block;font-size:26px;line-height:1.15}
+  .stat span{font-size:11px;color:var(--muted)}
+  .last{background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--accent);
+    border-radius:11px;padding:12px;margin-bottom:10px;min-height:64px}
+  .last .code{font-size:22px;font-weight:700}
+  .last .name{font-size:13px;color:var(--muted);margin-top:3px;word-break:break-all}
+  ul{list-style:none;margin:0;padding:0;max-height:38vh;overflow:auto}
+  li{display:flex;justify-content:space-between;gap:8px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px}
+  li .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  li .r{color:var(--muted);flex:0 0 auto;font-size:11px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .ng{color:var(--ng)}
+  .msg{font-size:13px;padding:10px;border-radius:9px;margin-top:10px;display:none}
+  .msg.show{display:block}
+  .msg.err{background:#3f1d1d;color:#fecaca}
+  .msg.info{background:#1e293b;color:#cbd5e1}
+  .hide{display:none!important}
+  .foot{font-size:11px;color:var(--muted);text-align:center;padding:8px 0 20px;line-height:1.6}
+  .queue{font-size:12px;color:var(--warn);margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── 設定 ───────────────────────── -->
+  <section id="setup">
+    <h1>📦 バーコード読取（設定）</h1>
+    <div class="card">
+      <label>担当者名</label>
+      <input id="who" type="text" placeholder="例：交併" autocomplete="off">
+      <label>合言葉</label>
+      <input id="token" type="password" placeholder="Claudeから渡された文字列" autocomplete="off">
+      <label>箱番号（記録用・任意）</label>
+      <input id="box" type="text" inputmode="numeric" placeholder="例：55" autocomplete="off">
+      <button id="go">この端末に保存して開始</button>
+      <div class="msg info show">合言葉はこの端末にだけ保存されます。次回からは入力不要です。</div>
+    </div>
+  </section>
+
+  <!-- ── スキャン ───────────────────── -->
+  <section id="scan" class="hide">
+    <div class="stats">
+      <div class="stat"><b id="n">0</b><span>読取</span></div>
+      <div class="stat"><b id="rate">–</b><span>件/分</span></div>
+      <div class="stat"><b id="elapsed">0:00</b><span>経過</span></div>
+    </div>
+
+    <div class="last" id="last">
+      <div class="code">読み取り待ち</div>
+      <div class="name">バーコードをカメラに向けてください</div>
+    </div>
+
+    <div id="reader"></div>
+    <div class="queue hide" id="queue"></div>
+    <div class="msg" id="msg"></div>
+
+    <div class="row" style="margin-top:12px">
+      <button class="sub" id="pause">一時停止</button>
+      <button class="sub" id="reset">設定に戻る</button>
+    </div>
+
+    <ul id="log"></ul>
+  </section>
+
+  <div class="foot">
+    願い株式会社 内部用<br>
+    読み取った番号は「RSL用バーコード作成ファイル」のスキャンタブに入ります
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // GASの受け口（公開URL。合言葉が無いと書き込めない）
+  var ENDPOINT = "https://script.google.com/macros/s/AKfycbwe3yY1pT_QX-2WJiibkdjH-o-maFZd2RNnjXltvoZ2ck-KXCMtH21xLR-yDgZ7bEtN/exec";
+
+  var LS = "venyvelm.scan.v1";
+  var $ = function(id){ return document.getElementById(id); };
+
+  var cfg = { who:"", token:"", box:"" };
+  var scanner = null, running = false;
+  var count = 0, startedAt = 0, timer = null;
+  var lastCode = "", lastAt = 0;
+  var queue = [];
+
+  // ── 保存された設定 ───────────────
+  try {
+    var saved = JSON.parse(localStorage.getItem(LS) || "{}");
+    cfg.who = saved.who || ""; cfg.token = saved.token || ""; cfg.box = saved.box || "";
+  } catch(e){}
+  try { queue = JSON.parse(localStorage.getItem(LS+".q") || "[]"); } catch(e){ queue = []; }
+  $("who").value = cfg.who; $("token").value = cfg.token; $("box").value = cfg.box;
+
+  function saveCfg(){
+    try { localStorage.setItem(LS, JSON.stringify(cfg)); } catch(e){}
+  }
+  function saveQueue(){
+    try { localStorage.setItem(LS+".q", JSON.stringify(queue)); } catch(e){}
+    var q = $("queue");
+    if (queue.length) { q.textContent = "未送信 " + queue.length + " 件（電波が戻ると自動で送ります）"; q.classList.remove("hide"); }
+    else q.classList.add("hide");
+  }
+
+  function msg(text, kind){
+    var m = $("msg");
+    if (!text) { m.classList.remove("show"); return; }
+    m.textContent = text;
+    m.className = "msg show " + (kind || "info");
+  }
+
+  // ── 音とバイブ ───────────────────
+  var actx = null;
+  function beep(good){
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.connect(g); g.connect(actx.destination);
+      o.frequency.value = good ? 1180 : 320;
+      g.gain.setValueAtTime(0.001, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.25, actx.currentTime + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + (good ? 0.09 : 0.28));
+      o.start(); o.stop(actx.currentTime + (good ? 0.1 : 0.3));
+    } catch(e){}
+    try { navigator.vibrate && navigator.vibrate(good ? 30 : [60,50,60]); } catch(e){}
+  }
+
+  // ── 経過時間 / 分速 ──────────────
+  function tick(){
+    if (!startedAt) return;
+    var s = Math.floor((Date.now() - startedAt)/1000);
+    $("elapsed").textContent = Math.floor(s/60) + ":" + ("0"+(s%60)).slice(-2);
+    $("rate").textContent = s >= 3 ? (count / (s/60)).toFixed(1) : "–";
+  }
+
+  // ── 送信 ────────────────────────
+  function send(codes){
+    var body = JSON.stringify({ t: cfg.token, who: cfg.who, box: cfg.box, codes: codes });
+    return fetch(ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: body
+    }).then(function(r){ return r.json(); });
+  }
+
+  function flushQueue(){
+    if (!queue.length) return;
+    var batch = queue.slice(0, 30);
+    send(batch).then(function(res){
+      if (res && res.ok) { queue = queue.slice(batch.length); saveQueue(); msg(""); }
+      else if (res && res.error === "bad_token") msg("合言葉が違います。設定に戻って入れ直してください。", "err");
+      else if (res && res.error === "closed") msg("スキャンタブの「スマホ受付」が OFF です。ON にすると未送信分も送られます。", "err");
+    }).catch(function(){});
+  }
+
+  function push(code){
+    var now = Date.now();
+    // 同じラベルの二度読み防止（2秒以内の同一コードは無視）
+    if (code === lastCode && now - lastAt < 2000) return;
+    lastCode = code; lastAt = now;
+
+    if (!startedAt) { startedAt = now; timer = setInterval(tick, 500); }
+    count++;
+    $("n").textContent = count;
+    beep(true);
+    tick();
+
+    $("last").innerHTML = '<div class="code">' + esc(code) + '</div>'
+                        + '<div class="name">送信中…</div>';
+
+    send([code]).then(function(res){
+      if (!res || !res.ok) {
+        var e = res && res.error;
+        if (e === "bad_token") { msg("合言葉が違います。設定に戻って入れ直してください。", "err"); return; }
+        if (e === "closed") { msg("スキャンタブの「スマホ受付」が OFF です。ON にしてから読み取ってください。", "err"); return; }
+        if (e === "rate_limit") { msg("受付の上限に達しました。しばらく待ってください。", "err"); return; }
+        throw new Error(e || "ng");
+      }
+      msg("");
+      var r = (res.results && res.results[0]) || {};
+      var cls = /該当なし/.test(r.judge||"") ? "ng" : (/重複/.test(r.judge||"") ? "warn" : "ok");
+      if (cls !== "ok") beep(false);
+      $("last").innerHTML = '<div class="code ' + cls + '">' + esc(code) + '　' + esc(r.judge||"") + '</div>'
+                          + '<div class="name">' + esc(r.oya||"") + '　' + esc(r.name||"") + '</div>';
+      addLog(code, r, cls);
+      flushQueue();
+    }).catch(function(){
+      queue.push(code); saveQueue();
+      msg("送信できませんでした。端末に貯めて、あとで自動送信します。", "err");
+      $("last").innerHTML = '<div class="code warn">' + esc(code) + '</div>'
+                          + '<div class="name">未送信（あとで送ります）</div>';
+      addLog(code, {judge:"⏳ 未送信"}, "warn");
+    });
+  }
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
+    });
+  }
+
+  function addLog(code, r, cls){
+    var li = document.createElement("li");
+    li.innerHTML = '<span class="l"><b>' + esc(code) + '</b> ' + esc(r.oya||"") + '</span>'
+                 + '<span class="r ' + cls + '">' + esc(r.judge||"") + '</span>';
+    var ul = $("log");
+    ul.insertBefore(li, ul.firstChild);
+    while (ul.children.length > 60) ul.removeChild(ul.lastChild);
+  }
+
+  // ── カメラ開始 ──────────────────
+  function start(){
+    var F = Html5QrcodeSupportedFormats;
+    scanner = new Html5Qrcode("reader", {
+      formatsToSupport: [
+        F.CODE_128, F.CODE_39, F.CODE_93, F.ITF, F.CODABAR,
+        F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.QR_CODE
+      ],
+      verbose: false
+    });
+    var conf = { fps: 12, qrbox: function(w,h){ var s = Math.floor(Math.min(w,h)*0.82); return { width:s, height:Math.floor(s*0.55) }; } };
+    scanner.start({ facingMode: "environment" }, conf, function(text){ push(String(text).trim()); }, function(){})
+      .then(function(){ running = true; msg(""); })
+      .catch(function(err){
+        msg("カメラを開けませんでした：" + err + "\nブラウザのカメラ許可を確認してください。", "err");
+      });
+  }
+
+  // ── 画面遷移 ────────────────────
+  $("go").addEventListener("click", function(){
+    cfg.who = $("who").value.trim();
+    cfg.token = $("token").value.trim();
+    cfg.box = $("box").value.trim();
+    if (!cfg.who) { alert("担当者名を入れてください"); return; }
+    if (!cfg.token) { alert("合言葉を入れてください"); return; }
+    saveCfg();
+    $("setup").classList.add("hide");
+    $("scan").classList.remove("hide");
+    saveQueue();
+    start();
+    flushQueue();
+  });
+
+  $("pause").addEventListener("click", function(){
+    if (!scanner) return;
+    if (running) {
+      scanner.pause(true); running = false; $("pause").textContent = "再開";
+    } else {
+      scanner.resume(); running = true; $("pause").textContent = "一時停止";
+    }
+  });
+
+  $("reset").addEventListener("click", function(){
+    if (scanner && running) { try { scanner.stop(); } catch(e){} }
+    running = false;
+    if (timer) clearInterval(timer);
+    $("scan").classList.add("hide");
+    $("setup").classList.remove("hide");
+  });
+
+  // 復帰時に未送信を送る
+  window.addEventListener("online", flushQueue);
+  document.addEventListener("visibilitychange", function(){
+    if (!document.hidden) flushQueue();
+  });
+
+  saveQueue();
+})();
+</script>
+</body>
+</html>
