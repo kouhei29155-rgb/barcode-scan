@@ -20,12 +20,11 @@
   h1{font-size:17px;margin:4px 0 12px;font-weight:700}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
   label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
-  input{width:100%;padding:13px;font-size:17px;border-radius:9px;border:1px solid var(--line);
+  input,select{width:100%;padding:13px;font-size:17px;border-radius:9px;border:1px solid var(--line);
     background:#0b1220;color:var(--fg)}
   button{width:100%;padding:15px;font-size:17px;font-weight:700;border:0;border-radius:11px;
     background:var(--accent);color:#0b1220;margin-top:12px}
   button.sub{background:#374151;color:var(--fg)}
-  button:disabled{opacity:.45}
   .row{display:flex;gap:8px}
   .row>button{margin-top:0}
   #reader{width:100%;border-radius:12px;overflow:hidden;background:#000;min-height:220px}
@@ -38,7 +37,7 @@
     border-radius:11px;padding:12px;margin-bottom:10px;min-height:64px}
   .last .code{font-size:22px;font-weight:700}
   .last .name{font-size:13px;color:var(--muted);margin-top:3px;word-break:break-all}
-  ul{list-style:none;margin:0;padding:0;max-height:38vh;overflow:auto}
+  ul{list-style:none;margin:0;padding:0;max-height:34vh;overflow:auto}
   li{display:flex;justify-content:space-between;gap:8px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:13px}
   li .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   li .r{color:var(--muted);flex:0 0 auto;font-size:11px}
@@ -48,23 +47,32 @@
   .msg.err{background:#3f1d1d;color:#fecaca}
   .msg.info{background:#1e293b;color:#cbd5e1}
   .hide{display:none!important}
-  /* 読み取った瞬間の全画面フラッシュ（音が鳴らない端末でも分かるように） */
-  #flash{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
-    flex-direction:column;pointer-events:none;font-weight:800;color:#06210f;text-align:center;padding:20px}
-  #flash.on{display:flex;animation:pop .45s ease-out}
-  #flash .big{font-size:64px;line-height:1}
-  #flash .t1{font-size:34px;margin-top:8px}
-  #flash .t2{font-size:16px;margin-top:6px;font-weight:600;opacity:.85;word-break:break-all}
-  #flash.g{background:rgba(52,211,153,.94)}
-  #flash.y{background:rgba(251,191,36,.94)}
-  #flash.r{background:rgba(248,113,113,.95);color:#2a0707}
-  @keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
   .foot{font-size:11px;color:var(--muted);text-align:center;padding:8px 0 20px;line-height:1.6}
   .queue{font-size:12px;color:var(--warn);margin-top:6px}
+
+  /* 読み取った瞬間の全画面表示。この間はカメラを止めているので二度読みしない */
+  #flash{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
+    flex-direction:column;pointer-events:none;font-weight:800;color:#06210f;text-align:center;padding:20px}
+  #flash.on{display:flex}
+  #flash .big{font-size:70px;line-height:1}
+  #flash .t1{font-size:38px;margin-top:6px;letter-spacing:1px}
+  #flash .t2{font-size:16px;margin-top:8px;font-weight:600;opacity:.9;word-break:break-all}
+  #flash .t3{font-size:14px;margin-top:14px;font-weight:700;opacity:.75}
+  #flash.g{background:rgba(52,211,153,.96)}
+  #flash.r{background:rgba(248,113,113,.97);color:#2a0707}
+  #cwrap{position:absolute;left:0;right:0;bottom:0;height:8px;background:rgba(0,0,0,.15)}
+  #cbar{height:100%;width:100%;background:rgba(0,0,0,.45)}
 </style>
 </head>
 <body>
-<div id="flash"><div class="big">✓</div><div class="t1"></div><div class="t2"></div></div>
+
+<div id="flash">
+  <div class="big">✓</div>
+  <div class="t1"></div>
+  <div class="t2"></div>
+  <div class="t3">次のラベルへ</div>
+  <div id="cwrap"><div id="cbar"></div></div>
+</div>
 
 <div class="wrap">
 
@@ -78,6 +86,13 @@
       <input id="token" type="password" placeholder="Claudeから渡された文字列" autocomplete="off">
       <label>箱番号（記録用・任意）</label>
       <input id="box" type="text" inputmode="numeric" placeholder="例：55" autocomplete="off">
+      <label>1枚読んでから次を受け付けるまでの待ち時間</label>
+      <select id="wait">
+        <option value="1000">1.0 秒</option>
+        <option value="1500" selected>1.5 秒（おすすめ）</option>
+        <option value="2000">2.0 秒</option>
+        <option value="2500">2.5 秒</option>
+      </select>
       <button id="go">この端末に保存して開始</button>
       <div class="msg info show">合言葉はこの端末にだけ保存されます。次回からは入力不要です。</div>
     </div>
@@ -119,42 +134,34 @@
 (function(){
   "use strict";
 
-  // GASの受け口（公開URL。合言葉が無いと書き込めない）
   var ENDPOINT = "https://script.google.com/macros/s/AKfycbwe3yY1pT_QX-2WJiibkdjH-o-maFZd2RNnjXltvoZ2ck-KXCMtH21xLR-yDgZ7bEtN/exec";
 
   var LS = "venyvelm.scan.v1";
   var $ = function(id){ return document.getElementById(id); };
 
-  var cfg = { who:"", token:"", box:"" };
-  var scanner = null, running = false;
+  var cfg = { who:"", token:"", box:"", wait:1500 };
+  var scanner = null, running = false, paused = false;
   var count = 0, startedAt = 0, timer = null;
-  var lastCode = "", lastDecodeAt = 0;
-  var ABSENT_MS = 600;   // 同じ番号をもう1枚として数えるには、いったん画面から外す必要がある
   var queue = [];
 
-  // 読み取った瞬間の全画面フラッシュ（iPhoneは音もバイブも出ないことがあるため）
-  var flashTimer = null;
-  function flash(kind, title, sub, mark){
-    var f = $("flash");
-    f.querySelector(".big").textContent = mark || "✓";
-    f.querySelector(".t1").textContent = title || "";
-    f.querySelector(".t2").textContent = sub || "";
-    f.className = "on " + kind;
-    if (flashTimer) clearTimeout(flashTimer);
-    flashTimer = setTimeout(function(){ f.className = ""; }, kind === "g" ? 420 : 900);
-  }
+  // 二度読み防止のための状態
+  var COOLDOWN = 1500;      // 1枚読んだあと、次を受け付けるまでの待ち時間（設定で変更可）
+  var GONE_MS = 600;        // 同じ番号をもう1枚と数えるには、これだけ画面から外れる必要がある
+  var lastCode = "";
+  var cooldownUntil = 0;
+  var missStart = 0;        // 「何も写っていない」状態が続き始めた時刻
 
-  // ── 保存された設定 ───────────────
+  // ── 設定の読み書き ───────────────
   try {
     var saved = JSON.parse(localStorage.getItem(LS) || "{}");
-    cfg.who = saved.who || ""; cfg.token = saved.token || ""; cfg.box = saved.box || "";
+    cfg.who = saved.who || ""; cfg.token = saved.token || "";
+    cfg.box = saved.box || ""; cfg.wait = saved.wait || 1500;
   } catch(e){}
   try { queue = JSON.parse(localStorage.getItem(LS+".q") || "[]"); } catch(e){ queue = []; }
-  $("who").value = cfg.who; $("token").value = cfg.token; $("box").value = cfg.box;
+  $("who").value = cfg.who; $("token").value = cfg.token;
+  $("box").value = cfg.box; $("wait").value = String(cfg.wait);
 
-  function saveCfg(){
-    try { localStorage.setItem(LS, JSON.stringify(cfg)); } catch(e){}
-  }
+  function saveCfg(){ try { localStorage.setItem(LS, JSON.stringify(cfg)); } catch(e){} }
   function saveQueue(){
     try { localStorage.setItem(LS+".q", JSON.stringify(queue)); } catch(e){}
     var q = $("queue");
@@ -169,11 +176,18 @@
     m.className = "msg show " + (kind || "info");
   }
 
-  // ── 音とバイブ ───────────────────
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
+    });
+  }
+
+  // ── 音 ──────────────────────────
   var actx = null;
   function beep(good){
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (!actx) return;
+      if (actx.state === "suspended") actx.resume();
       var o = actx.createOscillator(), g = actx.createGain();
       o.connect(g); g.connect(actx.destination);
       o.frequency.value = good ? 1180 : 320;
@@ -183,6 +197,32 @@
       o.start(); o.stop(actx.currentTime + (good ? 0.1 : 0.3));
     } catch(e){}
     try { navigator.vibrate && navigator.vibrate(good ? 30 : [60,50,60]); } catch(e){}
+  }
+
+  // ── 全画面表示＋カメラ停止（この間は絶対に読まない） ──
+  function holdScreen(kind, title, sub, mark){
+    var f = $("flash");
+    f.querySelector(".big").textContent = mark || "✓";
+    f.querySelector(".t1").textContent = title || "";
+    f.querySelector(".t2").textContent = sub || "";
+    f.className = "on " + kind;
+
+    var bar = $("cbar");
+    bar.style.transition = "none";
+    bar.style.width = "100%";
+    setTimeout(function(){
+      bar.style.transition = "width " + COOLDOWN + "ms linear";
+      bar.style.width = "0%";
+    }, 20);
+
+    cooldownUntil = Date.now() + COOLDOWN;
+    try { if (scanner && running && !paused) { scanner.pause(true); paused = true; } } catch(e){}
+
+    setTimeout(function(){
+      f.className = "";
+      try { if (scanner && paused) { scanner.resume(); paused = false; } } catch(e){}
+      missStart = 0;   // 止めている間は「外れた」に数えない
+    }, COOLDOWN);
   }
 
   // ── 経過時間 / 分速 ──────────────
@@ -195,11 +235,10 @@
 
   // ── 送信 ────────────────────────
   function send(codes){
-    var body = JSON.stringify({ t: cfg.token, who: cfg.who, box: cfg.box, codes: codes });
     return fetch(ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: body
+      body: JSON.stringify({ t: cfg.token, who: cfg.who, box: cfg.box, codes: codes })
     }).then(function(r){ return r.json(); });
   }
 
@@ -213,24 +252,31 @@
     }).catch(function(){});
   }
 
-  function push(code){
+  // ── 1フレーム読めなかったとき（＝ラベルが写っていない） ──
+  function onMiss(){
+    if (missStart === 0) missStart = Date.now();
+  }
+
+  // ── 読めたとき ──────────────────
+  function onRead(code){
     var now = Date.now();
-    var absent = now - lastDecodeAt;   // 直前の読み取りからの空白時間
-    lastDecodeAt = now;
+    // ラベルが十分な時間、画面から外れていたか
+    var gone = (missStart !== 0) && (now - missStart >= GONE_MS);
+    missStart = 0;
 
-    // 同じラベルを見続けている間は数えない。
-    // もう1枚数えたいときは、いったんカメラから外してもう一度向ける。
-    if (code === lastCode && absent < ABSENT_MS) {
-      flash("y", "同じラベル", "数えるにはいったん外してください", "…");
-      return;
-    }
+    if (now < cooldownUntil) return;              // 待ち時間中は何も受け付けない
+    if (code === lastCode && !gone) return;       // 同じラベルを見続けている
+
     lastCode = code;
+    accept(code, now);
+  }
 
+  function accept(code, now){
     if (!startedAt) { startedAt = now; timer = setInterval(tick, 500); }
     count++;
     $("n").textContent = count;
     beep(true);
-    flash("g", code, "読み取りました（" + count + "件目）", "✓");
+    holdScreen("g", code, "読み取りました（" + count + "件目）", "✓");
     tick();
 
     $("last").innerHTML = '<div class="code">' + esc(code) + '</div>'
@@ -240,34 +286,22 @@
       if (!res || !res.ok) {
         var e = res && res.error;
         if (e === "bad_token") { msg("合言葉が違います。設定に戻って入れ直してください。", "err"); return; }
-        if (e === "closed") { msg("スキャンタブの「スマホ受付」が OFF です。ON にしてから読み取ってください。", "err"); return; }
+        if (e === "closed") { msg("スキャンタブの「スマホ受付」が OFF です。ON にしてください。", "err"); return; }
         if (e === "rate_limit") { msg("受付の上限に達しました。しばらく待ってください。", "err"); return; }
         throw new Error(e || "ng");
       }
       msg("");
       var r = (res.results && res.results[0]) || {};
       var bad = /該当なし|多い/.test(r.judge || "");
-      var cls = bad ? "ng" : "ok";
-      if (bad) {
-        beep(false);
-        flash("r", r.judge || "確認", esc(code) + "　" + (r.oya || ""), "!");
-      }
-      $("last").innerHTML = '<div class="code ' + cls + '">' + esc(code) + '　' + esc(r.judge||"") + '</div>'
+      if (bad) { beep(false); holdScreen("r", r.judge || "確認", code + "　" + (r.oya || ""), "!"); }
+      $("last").innerHTML = '<div class="code ' + (bad ? "ng" : "ok") + '">' + esc(code) + '　' + esc(r.judge||"") + '</div>'
                           + '<div class="name">' + esc(r.oya||"") + '　' + esc(r.name||"") + '</div>';
-      addLog(code, r, cls);
+      addLog(code, r, bad ? "ng" : "ok");
       flushQueue();
     }).catch(function(){
       queue.push(code); saveQueue();
       msg("送信できませんでした。端末に貯めて、あとで自動送信します。", "err");
-      $("last").innerHTML = '<div class="code warn">' + esc(code) + '</div>'
-                          + '<div class="name">未送信（あとで送ります）</div>';
       addLog(code, {judge:"⏳ 未送信"}, "warn");
-    });
-  }
-
-  function esc(s){
-    return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){
-      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
     });
   }
 
@@ -290,11 +324,16 @@
       ],
       verbose: false
     });
-    var conf = { fps: 12, qrbox: function(w,h){ var s = Math.floor(Math.min(w,h)*0.82); return { width:s, height:Math.floor(s*0.55) }; } };
-    scanner.start({ facingMode: "environment" }, conf, function(text){ push(String(text).trim()); }, function(){})
+    var conf = { fps: 12, qrbox: function(w,h){
+      var s = Math.floor(Math.min(w,h)*0.82);
+      return { width:s, height:Math.floor(s*0.55) };
+    }};
+    scanner.start({ facingMode: "environment" }, conf,
+      function(text){ onRead(String(text).trim()); },
+      function(){ onMiss(); })
       .then(function(){ running = true; msg(""); })
       .catch(function(err){
-        msg("カメラを開けませんでした：" + err + "\nブラウザのカメラ許可を確認してください。", "err");
+        msg("カメラを開けませんでした：" + err + "  ブラウザのカメラ許可を確認してください。", "err");
       });
   }
 
@@ -303,17 +342,21 @@
     cfg.who = $("who").value.trim();
     cfg.token = $("token").value.trim();
     cfg.box = $("box").value.trim();
+    cfg.wait = Number($("wait").value) || 1500;
     if (!cfg.who) { alert("担当者名を入れてください"); return; }
     if (!cfg.token) { alert("合言葉を入れてください"); return; }
+    COOLDOWN = cfg.wait;
     saveCfg();
-    // iPhoneは「画面を触った瞬間」でないと音を出せないので、ここで音を起こしておく
+
+    // iPhoneは画面を触った瞬間でないと音を出せないので、ここで起こす
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      actx = new (window.AudioContext || window.webkitAudioContext)();
       if (actx.state === "suspended") actx.resume();
       var o = actx.createOscillator(), g = actx.createGain();
       o.connect(g); g.connect(actx.destination);
       g.gain.value = 0.0001; o.start(); o.stop(actx.currentTime + 0.02);
     } catch(e){}
+
     $("setup").classList.add("hide");
     $("scan").classList.remove("hide");
     saveQueue();
@@ -323,26 +366,20 @@
 
   $("pause").addEventListener("click", function(){
     if (!scanner) return;
-    if (running) {
-      scanner.pause(true); running = false; $("pause").textContent = "再開";
-    } else {
-      scanner.resume(); running = true; $("pause").textContent = "一時停止";
-    }
+    if (!paused) { try { scanner.pause(true); } catch(e){} paused = true; $("pause").textContent = "再開"; }
+    else { try { scanner.resume(); } catch(e){} paused = false; $("pause").textContent = "一時停止"; }
   });
 
   $("reset").addEventListener("click", function(){
-    if (scanner && running) { try { scanner.stop(); } catch(e){} }
-    running = false;
+    if (scanner) { try { scanner.stop(); } catch(e){} }
+    running = false; paused = false;
     if (timer) clearInterval(timer);
     $("scan").classList.add("hide");
     $("setup").classList.remove("hide");
   });
 
-  // 復帰時に未送信を送る
   window.addEventListener("online", flushQueue);
-  document.addEventListener("visibilitychange", function(){
-    if (!document.hidden) flushQueue();
-  });
+  document.addEventListener("visibilitychange", function(){ if (!document.hidden) flushQueue(); });
 
   saveQueue();
 })();
