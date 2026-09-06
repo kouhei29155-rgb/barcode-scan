@@ -48,11 +48,24 @@
   .msg.err{background:#3f1d1d;color:#fecaca}
   .msg.info{background:#1e293b;color:#cbd5e1}
   .hide{display:none!important}
+  /* 読み取った瞬間の全画面フラッシュ（音が鳴らない端末でも分かるように） */
+  #flash{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;
+    flex-direction:column;pointer-events:none;font-weight:800;color:#06210f;text-align:center;padding:20px}
+  #flash.on{display:flex;animation:pop .45s ease-out}
+  #flash .big{font-size:64px;line-height:1}
+  #flash .t1{font-size:34px;margin-top:8px}
+  #flash .t2{font-size:16px;margin-top:6px;font-weight:600;opacity:.85;word-break:break-all}
+  #flash.g{background:rgba(52,211,153,.94)}
+  #flash.y{background:rgba(251,191,36,.94)}
+  #flash.r{background:rgba(248,113,113,.95);color:#2a0707}
+  @keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
   .foot{font-size:11px;color:var(--muted);text-align:center;padding:8px 0 20px;line-height:1.6}
   .queue{font-size:12px;color:var(--warn);margin-top:6px}
 </style>
 </head>
 <body>
+<div id="flash"><div class="big">✓</div><div class="t1"></div><div class="t2"></div></div>
+
 <div class="wrap">
 
   <!-- ── 設定 ───────────────────────── -->
@@ -115,8 +128,21 @@
   var cfg = { who:"", token:"", box:"" };
   var scanner = null, running = false;
   var count = 0, startedAt = 0, timer = null;
-  var lastCode = "", lastAt = 0;
+  var lastCode = "", lastDecodeAt = 0;
+  var ABSENT_MS = 600;   // 同じ番号をもう1枚として数えるには、いったん画面から外す必要がある
   var queue = [];
+
+  // 読み取った瞬間の全画面フラッシュ（iPhoneは音もバイブも出ないことがあるため）
+  var flashTimer = null;
+  function flash(kind, title, sub, mark){
+    var f = $("flash");
+    f.querySelector(".big").textContent = mark || "✓";
+    f.querySelector(".t1").textContent = title || "";
+    f.querySelector(".t2").textContent = sub || "";
+    f.className = "on " + kind;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(function(){ f.className = ""; }, kind === "g" ? 420 : 900);
+  }
 
   // ── 保存された設定 ───────────────
   try {
@@ -189,14 +215,22 @@
 
   function push(code){
     var now = Date.now();
-    // 同じラベルの二度読み防止（2秒以内の同一コードは無視）
-    if (code === lastCode && now - lastAt < 2000) return;
-    lastCode = code; lastAt = now;
+    var absent = now - lastDecodeAt;   // 直前の読み取りからの空白時間
+    lastDecodeAt = now;
+
+    // 同じラベルを見続けている間は数えない。
+    // もう1枚数えたいときは、いったんカメラから外してもう一度向ける。
+    if (code === lastCode && absent < ABSENT_MS) {
+      flash("y", "同じラベル", "数えるにはいったん外してください", "…");
+      return;
+    }
+    lastCode = code;
 
     if (!startedAt) { startedAt = now; timer = setInterval(tick, 500); }
     count++;
     $("n").textContent = count;
     beep(true);
+    flash("g", code, "読み取りました（" + count + "件目）", "✓");
     tick();
 
     $("last").innerHTML = '<div class="code">' + esc(code) + '</div>'
@@ -212,8 +246,12 @@
       }
       msg("");
       var r = (res.results && res.results[0]) || {};
-      var cls = /該当なし/.test(r.judge||"") ? "ng" : (/重複/.test(r.judge||"") ? "warn" : "ok");
-      if (cls !== "ok") beep(false);
+      var bad = /該当なし|多い/.test(r.judge || "");
+      var cls = bad ? "ng" : "ok";
+      if (bad) {
+        beep(false);
+        flash("r", r.judge || "確認", esc(code) + "　" + (r.oya || ""), "!");
+      }
       $("last").innerHTML = '<div class="code ' + cls + '">' + esc(code) + '　' + esc(r.judge||"") + '</div>'
                           + '<div class="name">' + esc(r.oya||"") + '　' + esc(r.name||"") + '</div>';
       addLog(code, r, cls);
@@ -268,6 +306,14 @@
     if (!cfg.who) { alert("担当者名を入れてください"); return; }
     if (!cfg.token) { alert("合言葉を入れてください"); return; }
     saveCfg();
+    // iPhoneは「画面を触った瞬間」でないと音を出せないので、ここで音を起こしておく
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === "suspended") actx.resume();
+      var o = actx.createOscillator(), g = actx.createGain();
+      o.connect(g); g.connect(actx.destination);
+      g.gain.value = 0.0001; o.start(); o.stop(actx.currentTime + 0.02);
+    } catch(e){}
     $("setup").classList.add("hide");
     $("scan").classList.remove("hide");
     saveQueue();
